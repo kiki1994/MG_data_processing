@@ -18,7 +18,9 @@ import torch.optim
 import torch.utils.data
 import torchvision.transforms as transforms
 import torchvision.datasets as datasets
+import visdom
 
+vis = visdom.Visdom()
 
 H5_address ='/disks/disk0/linyuqi/dataset/data_gaze/gaze_detection/h5/'
 Save_model_address = '/disks/disk0/linyuqi/model/gaze_2eye_ARE/'
@@ -60,11 +62,12 @@ test_loader = torch.utils.data.DataLoader(test_Dataset,shuffle=True,batch_size=B
 
 
 L1_loss = nn.SmoothL1Loss().cuda()
+E_loss = nn.BCELoss().cuda()
 #l1_loss = nn.MSELoss().cuda()
 #optimizer = torch.optim.Adam(gaze_model.parameters(),lr=0.01)
 
-optimizer_AR = torch.optim.SGD(AR_model.parameters(),lr=0.0001,momentum=0.9)
-optimizer_E = torch.optim.SGD(E_model.parameters(),lr=0.0001,momentum=0.9)
+optimizer_AR = torch.optim.Adam(AR_model.parameters(),lr=0.0001,momentum=0.9)
+optimizer_E = torch.optim.Adam(E_model.parameters(),lr=0.0001,momentum=0.9)
 
 
 def d_3(result):
@@ -99,8 +102,23 @@ def accuracy_text(result_l,result_r,label_l,label_r):
     
     accuracy = (accuracy_l + accuracy_r)/2     #left and right average
     accuracy_avg = accuracy /result_l.size()[0]                      #[128]
-    return accuracy_avg 
-    
+    return accuracy_avg
+
+def before_loss(result_l,result_r,label_l,label_r,prob_l,prob_r):                             ####scale
+
+    mat_b = angle128_l <= angle128_r
+    mat_b = mat_b.float().cuda()
+
+    L_E128_up = torch.sum(torch.mul(result_l, result_r), 1)  ##torch.Size([128])
+    L_E128_down = torch.mul(torch.sqrt(torch.sum(torch.pow(result_l, 2), 1)),  ##torch.Size([128])
+                            torch.sqrt(torch.sum(torch.pow(result_r, 2), 1)))
+    L_E128 = -(mat_b * torch.mul(torch.acos(L_E128_up), torch.log(prob_l)) + (1 - mat_b) * torch.mul(
+                             torch.acos(L_E128_up), (torch.log(prob_r))))
+    L_E = torch.sum(L_E128, 0)
+
+    omega = (1 + (2 * mat_b - 1) * prob_l + (1 - 2 * mat_b) * prob_r) / 2
+    return  L_AR_,omega,angle128_l,angle128_r
+
 def train():
     AR_model.train()
     start = time.time()
@@ -139,14 +157,15 @@ def train():
  #       print(result_u)
 #        print(result_d)
 #        label = torch.cat([label_left,label_right],1)
-
-        L_E, L_AR, L_AR2 = loss_f(result_AR[:,:3],result_AR[:,3:],label_left,label_right,result_E[:,0],result_E[:,1])
-        loss = (L_E)
+        L_AR_, omega, angle128_l, angle128_r = before_loss(result_AR[:,:3],result_AR[:,3:],label_left,label_right,result_E[:,0],result_E[:,1])
+#        L_E, L_AR, L_AR2 = loss_f(result_AR[:,:3],result_AR[:,3:],label_left,label_right,result_E[:,0],result_E[:,1])
+        L_AR2 = loss_f(L_AR_, omega, angle128_l, angle128_r)
+        loss = (L_AR2)
 #        print(loss_AR)
-        
+
 #        print("--------")
-        print(L_E)        
-        print(L_AR)
+#        print(L_E)
+#        print(L_AR)
         print(L_AR2)
         print("++++++")
 #        label = torch.cat((label_left,label_right),1)
@@ -156,7 +175,9 @@ def train():
         optimizer_E.step()
         
         elapsed = time.time() - start
-
+        vis.line()
+        plot.scatter
+        vis.updateTrace()
         if i%20 ==0:
             print('num_of_batch = {}    train_loss={}      time = {:.2f}'.format(i,loss,elapsed))
 
